@@ -194,8 +194,11 @@ def storeKeyFiles(format):
                         f.write(db_con)         
         else:
             file_n = path2str(inp) + '.json'
-            with open(file_n, 'w', encoding='utf-8') as json_file:
-                json.dump(key_files, json_file, ensure_ascii=False, indent=2)
+            if Path(file_n).exists():
+                choice = input("There is already a analysis result. Do you want to overwrite it? (y/n)")
+            if choice == "y":
+                with open(file_n, 'w', encoding='utf-8') as json_file:
+                    json.dump(key_files, json_file, ensure_ascii=False, indent=2)
                 
             
 if __name__=="__main__":
