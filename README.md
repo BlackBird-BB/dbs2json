@@ -1,0 +1,1 @@
+download sqlite3.dll from [SQLite Download Page](https://www.sqlite.org/download.html), and replace the file in Python Home Folder.
