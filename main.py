@@ -14,6 +14,7 @@ from tempfile import mkstemp
 
 cmd_args = {}
 key_files = {}
+encrypt_files = []
 
 def path2str(pth):
     return str(pth).replace(":\\", "-").replace("\\", "-").replace("/", "-").replace(" ", '_').replace(".", "_")
@@ -74,6 +75,13 @@ def is_plist(file_path):
     if magic_number == b'bplist':
         return True
     return False    
+
+def is_encrypted_sqlite(file_path):
+    shm_file = file_path.parent / (file_path.name + '-shm')
+    wal_file = file_path.parent / (file_path.name + '-wal')
+    if shm_file.exists() or wal_file.exists():
+        return True
+    return False
 
 def ts2str(timestamp):
     try:
@@ -138,6 +146,10 @@ def selectKeyFiles(folder_path: Path, base_path: Path, verbose=False):
                 }
                 if verbose:
                     logger.success(f"{file_path} is plist file.\n{key_files[str(file_path.relative_to(base_path))]['info']}")
+            elif is_encrypted_sqlite(file_path):
+                if verbose:
+                    logger.info(f"{file_path} is encrypted sqlite file.")
+                encrypt_files.append(str(file_path.relative_to(base_path)))
         elif file_path.is_dir():
             selectKeyFiles(file_path, base_path, verbose)
         elif verbose:
@@ -225,3 +237,5 @@ if __name__=="__main__":
     obtainKeyFiles(args.sorted, args.verbose, args.strict)
     
     storeKeyFiles(format=args.format)
+    if len(encrypt_files) > 0:
+        print("These files are perhaps ENCRYPTED: \n", encrypt_files)
