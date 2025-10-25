@@ -31,6 +31,8 @@ Examples:
   %(prog)s -s size -st                       # Sort by size with strict error handling
   %(prog)s -f csv                            # Output to CSV format
   %(prog)s -i file.db -f csv -v              # Process single file to CSV with verbose output
+  %(prog)s -t 4                              # Use 4 threads for parallel processing
+  %(prog)s -t 0                              # Auto-detect optimal thread count
         """
     )
 
@@ -74,6 +76,13 @@ Examples:
         '-st', '--strict',
         action='store_true',
         help='Exit on errors instead of continuing processing'
+    )
+
+    parser.add_argument(
+        '-t', '--threads',
+        default=1,
+        type=int,
+        help='Number of threads for parallel processing (default: 1, use 0 for auto-detection)'
     )
 
     parser.add_argument(

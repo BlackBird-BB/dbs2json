@@ -62,6 +62,12 @@ def main() -> None:
 
     logger.info(f"Starting analysis of: {input_path}")
     logger.info(f"Output directory: {output_path}")
+    if args.threads > 1:
+        logger.info(f"Using {args.threads} threads for parallel processing")
+    elif args.threads == 0:
+        logger.info("Using auto-detected threads for parallel processing")
+    else:
+        logger.info("Using single-threaded processing")
 
     # Initialize database processor
     processor = DatabaseProcessor()
@@ -90,7 +96,7 @@ def main() -> None:
 
         # Stage 2: Process discovered files
         logger.info("Stage 2: Processing database files...")
-        processor.process_database_files(args.sorted, args.verbose, args.strict)
+        processor.process_database_files(args.sorted, args.verbose, args.strict, args.threads)
 
     # Stage 3: Save results
     logger.info("Stage 3: Saving results...")

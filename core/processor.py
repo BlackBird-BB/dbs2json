@@ -15,6 +15,8 @@ from pathlib import Path
 from shutil import copyfile
 from tempfile import mkstemp
 from typing import Dict, List, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from core.database import extract_sqlite_to_dict, extract_plist_to_dict
 from utils.file_detector import (
@@ -39,6 +41,12 @@ class DatabaseProcessor:
         self.path_n = None  # Path for temporary files
         self.inp = None  # Input path
         self.opt = None  # Output path
+        # Thread-safe locks
+        self._key_files_lock = threading.Lock()
+        self._encrypt_files_lock = threading.Lock()
+        self._progress_lock = threading.Lock()
+        self._processed_count = 0
+        self._total_files = 0
 
     def discover_database_files(
         self, folder_path: Path, base_path: Path, verbose: bool = False
@@ -149,19 +157,75 @@ class DatabaseProcessor:
                 # stringify datetime objects
                 dic[k] = str(v)
 
+    def _process_single_file_threaded(
+        self, db_name: str, tmp_file: str, verbose: bool, strict: bool
+    ) -> tuple[str, Dict[str, Any]]:
+        """
+        Process a single file in a thread-safe manner.
+
+        Args:
+            db_name: Name of the database file
+            tmp_file: Temporary file path for processing
+            verbose: Enable detailed logging output
+            strict: Exit on errors instead of continuing
+
+        Returns:
+            Tuple of (db_name, processed_content)
+        """
+        try:
+            if verbose:
+                logger.info(f"[Thread {threading.current_thread().name}] Start to analyze {db_name}")
+
+            # Process based on file type
+            with self._key_files_lock:
+                file_type = self.key_files[db_name]["info"]["type"]
+
+            if file_type == "sqlite":
+                db_json = extract_sqlite_to_dict(db_name, tmp_file, strict)
+            elif file_type == "plist":
+                db_json = extract_plist_to_dict(tmp_file)
+            else:
+                logger.warning(f"Unknown file type: {file_type}")
+                return db_name, {}
+
+            if verbose:
+                logger.info(f"[Thread {threading.current_thread().name}] {db_name} analyze done.")
+
+            # Update progress
+            with self._progress_lock:
+                self._processed_count += 1
+                if verbose and self._total_files > 0:
+                    progress = (self._processed_count / self._total_files) * 100
+                    logger.info(f"Progress: {self._processed_count}/{self._total_files} ({progress:.1f}%)")
+
+            return db_name, db_json
+
+        except Exception as e:
+            logger.error(f"[Thread {threading.current_thread().name}] {db_name} analyze error.")
+            with self._key_files_lock:
+                logger.error(f"File info: {self.key_files[db_name]}")
+            logger.error(f"Error: {e}")
+
+            if strict:
+                logger.error("Strict mode enabled, exiting due to processing error")
+                exit(-1)
+
+            return db_name, {}
+
     def process_database_files(
-        self, sorted_flag: str = "mtime", verbose: bool = False, strict: bool = False
+        self, sorted_flag: str = "mtime", verbose: bool = False, strict: bool = False, threads: int = 1
     ) -> None:
         """
         Process identified database files and extract their contents.
 
         This function sorts the discovered files, converts them to JSON format,
-        and enhances the data with post-processing.
+        and enhances the data with post-processing. Can use multiple threads for parallel processing.
 
         Args:
             sorted_flag: Sorting criteria (mtime, ctime, atime, size)
             verbose: Enable detailed logging output
             strict: Exit on errors instead of continuing
+            threads: Number of threads to use for parallel processing (1 = single-threaded, 0 = auto-detect)
         """
         # Define sorting function based on criteria
         if sorted_flag == "mtime":
@@ -176,13 +240,42 @@ class DatabaseProcessor:
             logger.warning(f"Unknown sorting flag: {sorted_flag}, using mtime")
             func = lambda key: self.key_files[key]["info"]["st_mtime"]
 
+        # Sort files by specified criteria (largest first)
+        key_files_name = sorted(self.key_files, key=func, reverse=True)
+        self._total_files = len(key_files_name)
+        self._processed_count = 0
+
+        # Determine thread count
+        if threads == 0:
+            # Auto-detect based on CPU cores (but cap at reasonable limit)
+            import multiprocessing
+            threads = min(multiprocessing.cpu_count(), 8)  # Cap at 8 to avoid overwhelming the system
+        elif threads < 1:
+            logger.warning(f"Invalid thread count: {threads}, using 1")
+            threads = 1
+
+        if len(key_files_name) == 0:
+            logger.warning("No files to process")
+            return
+
+        # Single-threaded processing (original logic)
+        if threads == 1 or len(key_files_name) == 1:
+            logger.info("Using single-threaded processing...")
+            self._process_single_threaded(key_files_name, verbose, strict)
+        else:
+            logger.info(f"Using multi-threaded processing with {threads} threads...")
+            self._process_multi_threaded(key_files_name, verbose, strict, threads)
+
+        # Post-process all data to decode binary content and extract nested plists
+        logger.info("Post-processing binary data and extracting nested plists...")
+        self.process_binary_data_in_dict(self.key_files)
+
+    def _process_single_threaded(self, key_files_name: List[str], verbose: bool, strict: bool) -> None:
+        """Process files using single-threaded approach (original logic)."""
         # Create temporary file for processing
         _, tmp_file = mkstemp()
 
         try:
-            # Sort files by specified criteria (largest first)
-            key_files_name = sorted(self.key_files, key=func, reverse=True)
-
             for db_name in key_files_name:
                 # Copy file to temporary location for processing
                 copyfile(self.key_files[db_name]["info"]["path"], tmp_file)
@@ -220,15 +313,50 @@ class DatabaseProcessor:
                 # Store processed content
                 self.key_files[db_name]["content"] = db_json
 
-            # Post-process all data to decode binary content and extract nested plists
-            self.process_binary_data_in_dict(self.key_files)
-
         finally:
             # Clean up temporary file
             try:
                 os.unlink(tmp_file)
             except OSError:
                 pass
+
+    def _process_multi_threaded(self, key_files_name: List[str], verbose: bool, strict: bool, threads: int) -> None:
+        """Process files using multi-threaded approach."""
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            # Submit all tasks
+            future_to_db_name = {}
+
+            for db_name in key_files_name:
+                # Create unique temporary file for each thread to avoid conflicts
+                _, tmp_file = mkstemp()
+
+                # Copy file to temporary location for processing
+                copyfile(self.key_files[db_name]["info"]["path"], tmp_file)
+
+                future = executor.submit(self._process_single_file_threaded, db_name, tmp_file, verbose, strict)
+                future_to_db_name[future] = (db_name, tmp_file)
+
+            # Collect results as they complete
+            for future in as_completed(future_to_db_name):
+                db_name, tmp_file = future_to_db_name[future]
+
+                try:
+                    result_db_name, db_json = future.result()
+
+                    # Store processed content (thread-safe)
+                    with self._key_files_lock:
+                        self.key_files[result_db_name]["content"] = db_json
+
+                except Exception as e:
+                    logger.error(f"Unexpected error processing {db_name}: {e}")
+                    with self._key_files_lock:
+                        self.key_files[db_name]["content"] = {}
+                finally:
+                    # Clean up temporary file
+                    try:
+                        os.unlink(tmp_file)
+                    except OSError:
+                        pass
 
     def set_paths(self, input_path: Path, output_path: Path) -> None:
         """
