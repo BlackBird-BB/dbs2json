@@ -122,6 +122,7 @@ class DatabaseProcessor:
     def process_binary_data_in_dict(self, dic: Dict[str, Any]) -> None:
         """
         Recursively process dictionary to decode binary data and extract nested plists.
+        Also need to peocess the decoded bplist
 
         This function traverses through dictionary values and:
         - Converts binary plist data to dictionaries
@@ -131,11 +132,28 @@ class DatabaseProcessor:
         Args:
             dic: Dictionary to process (modified in-place)
         """
-        for k, v in dic.items():
+        for k, v in list(dic.items()):
             if isinstance(v, bytes):
+                #better use elif tan if I think
                 # Check if binary data is a plist
                 if v[:6] == b"bplist":
-                    dic[k] = plistlib.loads(v)
+                    try:
+                        #load as a tentative type of data,maybe a dictionary or list
+                        new_data = plistlib.loads(v)
+                        #call this fuction at once,to ensure the decoded data will be processed
+                        if isinstance(new_data, (dict, list)):
+                            self.process_binary_data_in_dict(new_data)
+                        dic[k] = new_data
+
+                    except Exception as e:
+                        logger.warning(f"Failed to decode nested bplist for key '{k}': {e}. Falling back to file.")
+                        # Save binary blob to temporary file
+                        if not Path(self.path_n).exists():
+                            os.mkdir(self.path_n)
+                        tmp_file_name = self.path_n / str(uuid.uuid1())
+                        with open(tmp_file_name, "wb") as f:
+                            f.write(v)
+                        dic[k] = str(tmp_file_name.resolve())
                 else:
                     try:
                         # Try to decode as UTF-8 text
@@ -149,13 +167,41 @@ class DatabaseProcessor:
                             f.write(v)
                         dic[k] = str(tmp_file_name.resolve())
 
-            # Recursively process nested dictionaries
-            if isinstance(v, dict):
+            elif isinstance(v, dict):
                 self.process_binary_data_in_dict(v)
 
-            if isinstance(v, datetime.datetime):
+            #also need to process the list
+            elif isinstance(v, list):
+                for i, item in enumerate(v):
+                    if isinstance(item, bytes):
+                        if item.startswith(b'bplist'):
+                            try:
+                                new_list_item = plistlib.loads(item)
+                                if isinstance(new_list_item, (dict, list)):
+                                    self.process_binary_data_in_dict(new_list_item)
+                                v[i] = new_list_item
+                            except Exception:
+                                v[i] = "Failed_to_decode_nested_bplist_in_list"
+                        else:
+                            try:
+                                v[i] = item.decode('utf-8')
+                            except (UnicodeDecodeError, AttributeError):
+                                v[i] = f"Binary_data_in_list_uuid_{uuid.uuid1()}"
+                    elif isinstance(item, dict):
+                        self.process_binary_data_in_dict(item)
+                    elif isinstance(item, list):
+                        self.process_binary_data_in_dict(item)
+                    elif isinstance(item, datetime.datetime):
+                        v[i] = str(item)
+                    elif isinstance(item, plistlib.UID):
+                        v[i] = item.data
+
+            elif isinstance(v, datetime.datetime):
                 # stringify datetime objects
                 dic[k] = str(v)
+            #don't forget UID type
+            elif isinstance(v, plistlib.UID):
+                dic[k] = v.data
 
     def _process_single_file_threaded(
         self, db_name: str, tmp_file: str, verbose: bool, strict: bool
