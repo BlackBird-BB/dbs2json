@@ -88,6 +88,9 @@ python main.py -v
 
 # Specify output directory
 python main.py -o /path/to
+```
+
+Run tests:
 
 ```bash
 # 安装完整依赖
