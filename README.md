@@ -2,6 +2,8 @@
 
 It's a python script transfering db files(sqlite & plist) to a json file. It's very useful in forensics. You can use the script to show all info in a folder or json file, which makes it much easier to read/search/understand info.
 
+Here're some use cases: [see detailed examples](examples/EXAMPLE.md) from the MeiyaCup 2024 Individual Competition.
+
 And I used AI to generate some test cases, but the codes are not perfect to pass all the test cases, so there may be some errors. Please let me know if you find any bugs or have any suggestions, feel free to raise an issue or pull request, thank you!
 
 ## Install
