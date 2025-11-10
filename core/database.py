@@ -12,7 +12,9 @@ from loguru import logger
 from typing import Dict, List, Any
 
 
-def extract_sqlite_to_dict(db_name: str, sqlite_file: str, strict: bool = False) -> Dict[str, List[List[Any]]]:
+def extract_sqlite_to_dict(
+    db_name: str, sqlite_file: str, strict: bool = False
+) -> Dict[str, List[List[Any]]]:
     """
     Extract SQLite database content to dictionary format.
 
@@ -44,7 +46,7 @@ def extract_sqlite_to_dict(db_name: str, sqlite_file: str, strict: bool = False)
                 columns_name = [i[1] for i in cur.fetchall()]
 
                 # Get table data
-                cur.execute(f'SELECT * FROM {table_name}')
+                cur.execute(f"SELECT * FROM {table_name}")
                 rows = cur.fetchall()
 
                 # Process rows and decode bytes
@@ -53,7 +55,7 @@ def extract_sqlite_to_dict(db_name: str, sqlite_file: str, strict: bool = False)
                     row_n = []
                     for item in row:
                         if isinstance(item, bytes):
-                            row_n.append(item.decode('utf-8', errors='ignore'))
+                            row_n.append(item.decode("utf-8", errors="ignore"))
                         else:
                             row_n.append(item)
                     rows_n.append(row_n)
@@ -63,7 +65,14 @@ def extract_sqlite_to_dict(db_name: str, sqlite_file: str, strict: bool = False)
                 db_content[table_name] = rows_n
 
             except sqlite3.OperationalError as e:
-                logger.warning(f'Select table {table_name} from {db_name} error with: {e}')
+                if "no such module" in str(e):
+                    logger.warning(
+                        f"Skipping table {table_name} from {db_name} due to missing module"
+                    )
+                    continue
+                logger.warning(
+                    f"Select table {table_name} from {db_name} error with: {e}"
+                )
                 if strict:
                     logger.error("Strict mode enabled, exiting due to database error")
                     exit(-1)
@@ -71,7 +80,7 @@ def extract_sqlite_to_dict(db_name: str, sqlite_file: str, strict: bool = False)
                     continue
 
     except Exception as e:
-        logger.error(f'Database connection error for {db_name}: {e}')
+        logger.error(f"Database connection error for {db_name}: {e}")
         if strict:
             exit(-1)
     finally:
@@ -91,5 +100,5 @@ def extract_plist_to_dict(plist_file: str) -> Dict[str, Any]:
     Returns:
         Dictionary containing plist data
     """
-    with open(plist_file, 'rb') as f:
+    with open(plist_file, "rb") as f:
         return plistlib.load(f)

@@ -134,19 +134,21 @@ class DatabaseProcessor:
         """
         for k, v in list(dic.items()):
             if isinstance(v, bytes):
-                #better use elif tan if I think
+                # better use elif tan if I think
                 # Check if binary data is a plist
                 if v[:6] == b"bplist":
                     try:
-                        #load as a tentative type of data,maybe a dictionary or list
+                        # load as a tentative type of data,maybe a dictionary or list
                         new_data = plistlib.loads(v)
-                        #call this fuction at once,to ensure the decoded data will be processed
+                        # call this fuction at once,to ensure the decoded data will be processed
                         if isinstance(new_data, (dict, list)):
                             self.process_binary_data_in_dict(new_data)
                         dic[k] = new_data
 
                     except Exception as e:
-                        logger.warning(f"Failed to decode nested bplist for key '{k}': {e}. Falling back to file.")
+                        logger.warning(
+                            f"Failed to decode nested bplist for key '{k}': {e}. Falling back to file."
+                        )
                         # Save binary blob to temporary file
                         if not Path(self.path_n).exists():
                             os.mkdir(self.path_n)
@@ -170,11 +172,11 @@ class DatabaseProcessor:
             elif isinstance(v, dict):
                 self.process_binary_data_in_dict(v)
 
-            #also need to process the list
+            # also need to process the list
             elif isinstance(v, list):
                 for i, item in enumerate(v):
                     if isinstance(item, bytes):
-                        if item.startswith(b'bplist'):
+                        if item.startswith(b"bplist"):
                             try:
                                 new_list_item = plistlib.loads(item)
                                 if isinstance(new_list_item, (dict, list)):
@@ -184,13 +186,15 @@ class DatabaseProcessor:
                                 v[i] = "Failed_to_decode_nested_bplist_in_list"
                         else:
                             try:
-                                v[i] = item.decode('utf-8')
+                                v[i] = item.decode("utf-8")
                             except (UnicodeDecodeError, AttributeError):
                                 v[i] = f"Binary_data_in_list_uuid_{uuid.uuid1()}"
                     elif isinstance(item, dict):
                         self.process_binary_data_in_dict(item)
                     elif isinstance(item, list):
-                        self.process_binary_data_in_dict(item)
+                        self.process_binary_data_in_dict(
+                            {idx: item[idx] for idx in range(len(item))}
+                        )
                     elif isinstance(item, datetime.datetime):
                         v[i] = str(item)
                     elif isinstance(item, plistlib.UID):
@@ -199,7 +203,7 @@ class DatabaseProcessor:
             elif isinstance(v, datetime.datetime):
                 # stringify datetime objects
                 dic[k] = str(v)
-            #don't forget UID type
+            # don't forget UID type
             elif isinstance(v, plistlib.UID):
                 dic[k] = v.data
 
@@ -220,7 +224,9 @@ class DatabaseProcessor:
         """
         try:
             if verbose:
-                logger.info(f"[Thread {threading.current_thread().name}] Start to analyze {db_name}")
+                logger.info(
+                    f"[Thread {threading.current_thread().name}] Start to analyze {db_name}"
+                )
 
             # Process based on file type
             with self._key_files_lock:
@@ -234,20 +240,29 @@ class DatabaseProcessor:
                 logger.warning(f"Unknown file type: {file_type}")
                 return db_name, {}
 
+            # process binary data and extract nested plists
+            self.process_binary_data_in_dict(db_json)
+
             if verbose:
-                logger.info(f"[Thread {threading.current_thread().name}] {db_name} analyze done.")
+                logger.info(
+                    f"[Thread {threading.current_thread().name}] {db_name} analyze done."
+                )
 
             # Update progress
             with self._progress_lock:
                 self._processed_count += 1
                 if verbose and self._total_files > 0:
                     progress = (self._processed_count / self._total_files) * 100
-                    logger.info(f"Progress: {self._processed_count}/{self._total_files} ({progress:.1f}%)")
+                    logger.info(
+                        f"Progress: {self._processed_count}/{self._total_files} ({progress:.1f}%)"
+                    )
 
             return db_name, db_json
 
         except Exception as e:
-            logger.error(f"[Thread {threading.current_thread().name}] {db_name} analyze error.")
+            logger.error(
+                f"[Thread {threading.current_thread().name}] {db_name} analyze error."
+            )
             with self._key_files_lock:
                 logger.error(f"File info: {self.key_files[db_name]}")
             logger.error(f"Error: {e}")
@@ -259,7 +274,11 @@ class DatabaseProcessor:
             return db_name, {}
 
     def process_database_files(
-        self, sorted_flag: str = "mtime", verbose: bool = False, strict: bool = False, threads: int = 1
+        self,
+        sorted_flag: str = "mtime",
+        verbose: bool = False,
+        strict: bool = False,
+        threads: int = 1,
     ) -> None:
         """
         Process identified database files and extract their contents.
@@ -295,7 +314,10 @@ class DatabaseProcessor:
         if threads == 0:
             # Auto-detect based on CPU cores (but cap at reasonable limit)
             import multiprocessing
-            threads = min(multiprocessing.cpu_count(), 8)  # Cap at 8 to avoid overwhelming the system
+
+            threads = min(
+                multiprocessing.cpu_count(), 8
+            )  # Cap at 8 to avoid overwhelming the system
         elif threads < 1:
             logger.warning(f"Invalid thread count: {threads}, using 1")
             threads = 1
@@ -313,10 +335,12 @@ class DatabaseProcessor:
             self._process_multi_threaded(key_files_name, verbose, strict, threads)
 
         # Post-process all data to decode binary content and extract nested plists
-        logger.info("Post-processing binary data and extracting nested plists...")
-        self.process_binary_data_in_dict(self.key_files)
+        # logger.info("Post-processing binary data and extracting nested plists...")
+        # self.process_binary_data_in_dict(self.key_files)
 
-    def _process_single_threaded(self, key_files_name: List[str], verbose: bool, strict: bool) -> None:
+    def _process_single_threaded(
+        self, key_files_name: List[str], verbose: bool, strict: bool
+    ) -> None:
         """Process files using single-threaded approach (original logic)."""
         # Create temporary file for processing
         _, tmp_file = mkstemp()
@@ -340,6 +364,8 @@ class DatabaseProcessor:
                             f"Unknown file type: {self.key_files[db_name]['info']['type']}"
                         )
                         continue
+
+                    self.process_binary_data_in_dict(db_json)
 
                     if verbose:
                         logger.info(f"{db_name} analyze done.")
@@ -366,7 +392,9 @@ class DatabaseProcessor:
             except OSError:
                 pass
 
-    def _process_multi_threaded(self, key_files_name: List[str], verbose: bool, strict: bool, threads: int) -> None:
+    def _process_multi_threaded(
+        self, key_files_name: List[str], verbose: bool, strict: bool, threads: int
+    ) -> None:
         """Process files using multi-threaded approach."""
         with ThreadPoolExecutor(max_workers=threads) as executor:
             # Submit all tasks
@@ -379,7 +407,13 @@ class DatabaseProcessor:
                 # Copy file to temporary location for processing
                 copyfile(self.key_files[db_name]["info"]["path"], tmp_file)
 
-                future = executor.submit(self._process_single_file_threaded, db_name, tmp_file, verbose, strict)
+                future = executor.submit(
+                    self._process_single_file_threaded,
+                    db_name,
+                    tmp_file,
+                    verbose,
+                    strict,
+                )
                 future_to_db_name[future] = (db_name, tmp_file)
 
             # Collect results as they complete
