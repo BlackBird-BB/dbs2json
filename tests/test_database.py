@@ -78,7 +78,7 @@ class TestExtractSqliteToDict:
         assert "binary_test" in result
         data = result["binary_test"]
         assert len(data) == 2  # Header + 1 row
-        assert data[1][2] == binary_data.decode('utf-8', errors='ignore')
+        assert data[1][2] == binary_data
 
     def test_extract_sqlite_with_corrupted_table(self, temp_dir):
         """Test handling of corrupted or inaccessible tables."""

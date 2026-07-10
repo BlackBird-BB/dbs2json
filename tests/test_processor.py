@@ -204,10 +204,12 @@ class TestDatabaseProcessor:
 
         processor.process_binary_data_in_dict(test_dict)
 
-        # Check that binary data was saved to file and path was stored
+        # Check that binary data was saved exactly with reconstructable metadata
         assert "binary_field" in test_dict
-        assert isinstance(test_dict["binary_field"], str)
-        assert Path(test_dict["binary_field"]).exists()
+        binary_ref = test_dict["binary_field"]["$binary"]
+        assert Path(binary_ref["path"]).exists()
+        assert Path(binary_ref["path"]).read_bytes() == b"some binary data that's not a plist"
+        assert binary_ref["length"] == len(b"some binary data that's not a plist")
 
     def test_process_binary_data_in_dict_with_text_bytes(self, temp_dir):
         """Test processing UTF-8 text bytes in dictionary."""
@@ -221,8 +223,10 @@ class TestDatabaseProcessor:
 
         processor.process_binary_data_in_dict(test_dict)
 
-        # Check that text bytes were decoded
-        assert test_dict["text_bytes"] == "hello world"
+        # SQLite/plist bytes remain binary even when they happen to be valid UTF-8
+        binary_ref = test_dict["text_bytes"]["$binary"]
+        assert Path(binary_ref["path"]).read_bytes() == b"hello world"
+        assert binary_ref["length"] == len(b"hello world")
         assert test_dict["normal_string"] == "normal value"
 
     def test_process_database_files_sorting(self, temp_dir, sample_sqlite_db):
